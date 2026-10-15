@@ -1,6 +1,0 @@
-.gradle/
-build/
-local.properties
-*.apk
-# dibuat otomatis oleh GitHub Actions (tools/gen_blockdata.py)
-app/src/main/assets/blockdata.txt
