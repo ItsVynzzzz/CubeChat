@@ -1,0 +1,75 @@
+name: Build APK
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      # Ambil data blok resmi 1.21.11 (ID block state) untuk fisika.
+      # Jar server hanya dipakai di runner, TIDAK masuk repo atau APK.
+      - name: Generate block data
+        shell: bash
+        run: |
+          set -euo pipefail
+          MC=1.21.11
+          mkdir -p build/mcdata
+          cd build/mcdata
+          VURL=$(curl -fsSL https://piston-meta.mojang.com/mc/game/version_manifest_v2.json \
+            | jq -r --arg v "$MC" '.versions[] | select(.id==$v) | .url')
+          SURL=$(curl -fsSL "$VURL" | jq -r '.downloads.server.url')
+          curl -fsSL "$SURL" -o server.jar
+          java -DbundlerMainClass=net.minecraft.data.Main -jar server.jar --reports --output out
+          cd ../..
+          python3 tools/gen_blockdata.py build/mcdata/out/reports/blocks.json app/src/main/assets/blockdata.txt
+
+      # MCProtocolLib 1.21.11 = versi "1.21.11-1" (commit rilis 5863712e). Kalau belum ada di
+      # repo.opencollab.dev, bangun dari source dan taruh di mavenLocal (JITPACK=true melewati signing).
+      - name: Pastikan MCProtocolLib 1.21.11-1 tersedia
+        shell: bash
+        env:
+          JITPACK: "true"
+        run: |
+          set -euo pipefail
+          POM=https://repo.opencollab.dev/maven-releases/org/geysermc/mcprotocollib/protocol/1.21.11-1/protocol-1.21.11-1.pom
+          if curl -fsSI "$POM" > /dev/null; then
+            echo "Artefak 1.21.11-1 ada di repo.opencollab.dev"
+          else
+            echo "Artefak belum ada, membangun dari source..."
+            git clone https://github.com/GeyserMC/MCProtocolLib.git build/mcpl
+            git -C build/mcpl checkout 5863712e0538bcbfbe78340ecb1acbac26b0d4d4
+            (cd build/mcpl && ./gradlew :protocol:publishToMavenLocal -x test -x javadoc --no-daemon)
+          fi
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.10.2"
+
+      - name: Build debug APK
+        shell: bash
+        run: |
+          set -o pipefail
+          gradle :app:assembleDebug --no-daemon --stacktrace 2>&1 | tee build.log
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: CubeChat-debug-apk
+          path: app/build/outputs/apk/debug/*.apk
+
+      - name: Upload build log (kalau gagal)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build.log
