@@ -112,8 +112,9 @@ class McClient(context: Context, private val listener: Listener) {
                 listener.onStatus("Menghubungkan ke $host:$port ...")
                 s.connect()
                 startTicker()
-            } catch (e: Exception) {
-                listener.onDisconnected("Gagal: ${e.message ?: e.javaClass.simpleName}")
+            } catch (e: Throwable) {
+                val root = generateSequence(e) { it.cause }.last()
+                listener.onDisconnected("Gagal: ${e.javaClass.simpleName} / ${root.javaClass.simpleName}: ${root.message}")
             }
         }
     }
