@@ -33,6 +33,7 @@ android {
                 "META-INF/INDEX.LIST",
                 "META-INF/DEPENDENCIES",
                 "META-INF/io.netty.versions.properties",
+                "META-INF/native-image/**",
                 "META-INF/LICENSE*",
                 "META-INF/NOTICE*",
                 "META-INF/{AL2.0,LGPL2.1}"
@@ -43,6 +44,9 @@ android {
 
 configurations.all {
     exclude(group = "com.intellij", module = "annotations")
+    // immutable-2.0.jar adalah fat jar (maven-shade) yang sudah berisi seluruh kelas api-2.0.jar,
+    // plus implementasi VectorProvider via ServiceLoader. Memuat keduanya = "Duplicate class" di Android.
+    exclude(group = "org.cloudburstmc.math", module = "api")
 }
 
 dependencies {
