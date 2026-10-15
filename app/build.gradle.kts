@@ -34,6 +34,13 @@ android {
                 "META-INF/DEPENDENCIES",
                 "META-INF/io.netty.versions.properties",
                 "META-INF/native-image/**",
+                // netty-all menarik jar native Linux/macOS/Windows (quic, epoll, kqueue, ...) yang tidak
+                // berguna di Android dan membawa file lisensi dengan path sama -> "5 files found with path".
+                "META-INF/license/**",
+                "META-INF/native/**",
+                "META-INF/maven/**",
+                "META-INF/versions/**",
+                "**/module-info.class",
                 "META-INF/LICENSE*",
                 "META-INF/NOTICE*",
                 "META-INF/{AL2.0,LGPL2.1}"
