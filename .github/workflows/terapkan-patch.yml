@@ -1,0 +1,65 @@
+name: Terapkan patch
+
+# Cara pakai: unggah file berakhiran .patch (mis. Ubah-UI.patch) ke halaman utama repo.
+# Workflow ini menerapkannya ke kode, menyimpan hasilnya sebagai commit baru,
+# menghapus file .patch-nya, lalu menjalankan build APK secara otomatis.
+
+on:
+  push:
+    paths:
+      - '*.patch'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: terapkan-patch
+  cancel-in-progress: false
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Terapkan semua file .patch di folder utama
+        id: apply
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          files=(*.patch)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "Tidak ada file .patch di folder utama. Tidak ada yang dikerjakan."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git config user.name "patch-bot"
+          git config user.email "patch-bot@users.noreply.github.com"
+          for f in "${files[@]}"; do
+            echo "== Memeriksa $f"
+            if git apply --check --whitespace=nowarn "$f"; then
+              git apply --index --whitespace=nowarn "$f"
+            else
+              echo "Cara biasa gagal, mencoba mode 3-way ..."
+              git apply --3way --index --whitespace=nowarn "$f" || {
+                echo "::error::Patch $f tidak cocok dengan isi repo saat ini (file sudah berubah?). Tidak ada yang diubah."
+                exit 1
+              }
+            fi
+            git rm -q -f "$f"
+            echo "Patch $f diterapkan."
+          done
+          git commit -m "Terapkan patch otomatis: ${files[*]}"
+          git push
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Jalankan build APK
+        if: steps.apply.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run build.yml --ref "${{ github.ref_name }}"
