@@ -9,11 +9,12 @@ import kotlin.math.floor
 /**
  * Data blok untuk fisika. File assets/blockdata.txt dibuat saat build oleh
  * tools/gen_blockdata.py dari data resmi Minecraft 1.21.11.
- * Format: "N a-b" = block state tanpa collision, "F a-b" = fluida.
+ * Format: "N a-b" = block state tanpa collision, "F a-b" = fluida, "L a-b" = bisa dipanjat.
  */
 object BlockData {
     private val nonSolid = BitSet().apply { set(0) } // id 0 = air
     private val fluid = BitSet()
+    private val climbable = BitSet()
 
     @Volatile
     var loaded = false
@@ -35,6 +36,10 @@ object BlockData {
                             fluid.set(a, b + 1)
                             nonSolid.set(a, b + 1)
                         }
+                        "L" -> {
+                            climbable.set(a, b + 1)
+                            nonSolid.set(a, b + 1)
+                        }
                     }
                 }
             }
@@ -46,6 +51,38 @@ object BlockData {
 
     fun isSolid(id: Int) = !nonSolid.get(id)
     fun isFluid(id: Int) = fluid.get(id)
+    fun isClimbable(id: Int) = climbable.get(id)
+}
+
+/** Nama item untuk inventori. assets/itemdata.txt dibuat saat build: baris "<id> <nama>". */
+object ItemData {
+    private val names = HashMap<Int, String>()
+
+    @Volatile
+    var loaded = false
+        private set
+
+    fun load(context: Context) {
+        if (loaded) return
+        try {
+            context.assets.open("itemdata.txt").bufferedReader().useLines { lines ->
+                for (line in lines) {
+                    val i = line.indexOf(' ')
+                    if (i <= 0) continue
+                    val id = line.substring(0, i).toIntOrNull() ?: continue
+                    names[id] = pretty(line.substring(i + 1).trim())
+                }
+            }
+            loaded = true
+        } catch (e: Exception) {
+            // Tanpa file: nama item tampil sebagai "Item #id".
+        }
+    }
+
+    fun nameOf(id: Int): String = names[id] ?: "Item #$id"
+
+    private fun pretty(raw: String): String =
+        raw.split('_').joinToString(" ") { w -> w.replaceFirstChar { it.uppercase() } }
 }
 
 /** Penyimpan chunk: tiap section = 4096 block state id, null = semua udara. */
@@ -90,6 +127,11 @@ class World {
     fun isFluid(x: Int, y: Int, z: Int): Boolean {
         val id = getBlock(x, y, z)
         return id >= 0 && BlockData.isFluid(id)
+    }
+
+    fun isClimbable(x: Int, y: Int, z: Int): Boolean {
+        val id = getBlock(x, y, z)
+        return id >= 0 && BlockData.isClimbable(id)
     }
 
     /** Buang chunk yang jauh dari pemain supaya memori tidak membengkak. */
