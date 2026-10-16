@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """Ubah blocks.json (data generator resmi) menjadi assets/blockdata.txt.
 
-Baris "N a-b" = block state tanpa collision (tembus), "F a-b" = fluida.
+Baris "N a-b" = block state tanpa collision (tembus), "F a-b" = fluida,
+"L a-b" = bisa dipanjat (tangga, sulur; juga tembus).
+Kalau registries.json ada di folder yang sama dengan blocks.json, dibuat juga
+itemdata.txt (di folder output) berisi "<id> <nama>" untuk nama item di inventori.
 Pakai: gen_blockdata.py <blocks.json> <output.txt>
 """
 import json
@@ -30,6 +33,10 @@ NONSOLID_SUFFIX = (
     "_coral_fan", "_coral_wall_fan", "_fungus", "_tulip", "_torch", "_bush", "_crop",
 )
 OPENABLE_SUFFIX = ("_door", "_trapdoor", "_fence_gate")
+CLIMBABLE = {
+    "ladder", "vine", "weeping_vines", "weeping_vines_plant", "twisting_vines",
+    "twisting_vines_plant", "cave_vines", "cave_vines_plant",
+}
 
 
 def classify(name, props):
@@ -60,26 +67,56 @@ def ranges(ids):
     return out
 
 
+def write_items(registries_path, out_path):
+    """registries.json -> itemdata.txt ("<protocol_id> <nama>")."""
+    with open(registries_path, encoding="utf-8") as f:
+        reg = json.load(f)
+    entries = reg.get("minecraft:item", {}).get("entries", {})
+    rows = []
+    for full_name, data in entries.items():
+        pid = data.get("protocol_id")
+        if pid is None:
+            continue
+        rows.append((int(pid), full_name.split(":", 1)[-1]))
+    rows.sort()
+    with open(out_path, "w", encoding="utf-8") as f:
+        for pid, name in rows:
+            f.write(f"{pid} {name}\n")
+    return len(rows)
+
+
 def main():
+    import os
     src, dst = sys.argv[1], sys.argv[2]
     with open(src, encoding="utf-8") as f:
         blocks = json.load(f)
 
-    groups = {"N": [], "F": []}
+    groups = {"N": [], "F": [], "L": []}
     for full_name, data in blocks.items():
         name = full_name.split(":", 1)[-1]
         for st in data.get("states", []):
+            if name in CLIMBABLE:
+                groups["L"].append(st["id"])
+                continue
             kind = classify(name, st.get("properties", {}))
             if kind:
                 groups[kind].append(st["id"])
 
-    import os
     os.makedirs(os.path.dirname(os.path.abspath(dst)), exist_ok=True)
     with open(dst, "w", encoding="utf-8") as f:
-        for kind in ("N", "F"):
+        for kind in ("N", "F", "L"):
             for a, b in ranges(groups[kind]):
                 f.write(f"{kind} {a}-{b}\n")
-    print(f"blockdata: {len(groups['N'])} nonsolid, {len(groups['F'])} fluid states -> {dst}")
+    print(f"blockdata: {len(groups['N'])} nonsolid, {len(groups['F'])} fluid, "
+          f"{len(groups['L'])} climbable states -> {dst}")
+
+    reg_path = os.path.join(os.path.dirname(os.path.abspath(src)), "registries.json")
+    if os.path.exists(reg_path):
+        item_out = os.path.join(os.path.dirname(os.path.abspath(dst)), "itemdata.txt")
+        n = write_items(reg_path, item_out)
+        print(f"itemdata: {n} item -> {item_out}")
+    else:
+        print("registries.json tidak ditemukan: nama item akan tampil sebagai 'Item #id'")
 
 
 if __name__ == "__main__":
