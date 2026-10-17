@@ -110,6 +110,9 @@ class McClient(context: Context, private val listener: Listener) {
         fun onChat(line: ChatLine)
         fun onStatus(text: String)
         fun onDisconnected(reason: String)
+
+        /** Teks dari judul layar / action bar (bukan chat), mis. petunjuk login dari server. */
+        fun onNotice(text: String) {}
     }
 
     private val world = World()
@@ -464,14 +467,22 @@ class McClient(context: Context, private val listener: Listener) {
                     val t = p.text
                     if (t != null) setActionBar(ChatText.fromComponent(t))
                 }
-                is ClientboundSetTitleTextPacket -> synchronized(lock) {
-                    titleLine = ChatText.fromComponent(p.text)
-                    titleUntil = System.currentTimeMillis() + titleMillis()
+                is ClientboundSetTitleTextPacket -> {
+                    val line = ChatText.fromComponent(p.text)
+                    synchronized(lock) {
+                        titleLine = line
+                        titleUntil = System.currentTimeMillis() + titleMillis()
+                    }
+                    listener.onNotice(plainOf(line))
                 }
-                is ClientboundSetSubtitleTextPacket -> synchronized(lock) {
+                is ClientboundSetSubtitleTextPacket -> {
                     val t = p.text
-                    subtitleLine = if (t != null) ChatText.fromComponent(t) else null
-                    titleUntil = System.currentTimeMillis() + titleMillis()
+                    val line = if (t != null) ChatText.fromComponent(t) else null
+                    synchronized(lock) {
+                        subtitleLine = line
+                        titleUntil = System.currentTimeMillis() + titleMillis()
+                    }
+                    if (line != null) listener.onNotice(plainOf(line))
                 }
                 is ClientboundSetTitlesAnimationPacket -> synchronized(lock) {
                     fadeIn = p.fadeIn
@@ -575,7 +586,10 @@ class McClient(context: Context, private val listener: Listener) {
             actionLine = line
             actionUntil = System.currentTimeMillis() + 3500L
         }
+        listener.onNotice(plainOf(line))
     }
+
+    private fun plainOf(line: ChatLine): String = line.spans.joinToString("") { it.text }
 
     private fun onPlayerInfo(p: ClientboundPlayerInfoUpdatePacket) {
         synchronized(lock) {

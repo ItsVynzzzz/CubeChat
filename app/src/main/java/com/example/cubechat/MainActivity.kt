@@ -1,11 +1,8 @@
 package com.example.cubechat
 
-import android.app.Application
-import android.content.Context
 import android.os.Bundle
-import android.os.Handler
-import android.os.Looper
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.animation.animateColorAsState
@@ -47,7 +44,6 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
@@ -60,7 +56,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -91,7 +87,6 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
@@ -100,140 +95,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import androidx.lifecycle.AndroidViewModel
-import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.cubechat.net.ChatLine
 import com.example.cubechat.net.CommandInfo
 import com.example.cubechat.net.Hud
 import com.example.cubechat.net.ItemView
 import com.example.cubechat.net.Key
-import com.example.cubechat.net.McClient
 import com.example.cubechat.net.MenuView
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import kotlin.math.abs
-
-// ======================================================================= ViewModel
-
-class ChatViewModel(app: Application) : AndroidViewModel(app), McClient.Listener {
-    private val main = Handler(Looper.getMainLooper())
-    private val prefs = app.getSharedPreferences("cubechat", Context.MODE_PRIVATE)
-    private val client = McClient(app, this)
-    private var pollJob: Job? = null
-
-    val lines = mutableStateListOf<ChatLine>()
-    var status by mutableStateOf("Belum terhubung")
-    var connected by mutableStateOf(false)
-    var hud by mutableStateOf<Hud?>(null)
-    var sneakOn by mutableStateOf(false)
-    var sprintOn by mutableStateOf(false)
-
-    /** Isi kotak pesan di tab Obrolan (dibagi supaya tab Info bisa mengisi perintah). */
-    var chatInput by mutableStateOf("")
-
-    var lastAddress by mutableStateOf(prefs.getString("address", "") ?: "")
-    var lastUser by mutableStateOf(prefs.getString("user", "") ?: "")
-    val recent = mutableStateListOf<String>().apply {
-        addAll((prefs.getString("recent", "") ?: "").split('\n').filter { it.isNotBlank() })
-    }
-
-    /** Pesan yang terakhir dikirim (terbaru di depan), untuk dikirim ulang dengan satu ketukan. */
-    val recentSent = mutableStateListOf<String>()
-
-    fun connect(address: String, username: String) {
-        val a = address.trim()
-        val u = username.trim()
-        lines.clear()
-        hud = null
-        connected = true
-        status = "Menghubungkan..."
-        lastAddress = a
-        lastUser = u
-        val list = (listOf(a) + recent.filter { it != a }).take(5)
-        recent.clear()
-        recent.addAll(list)
-        prefs.edit()
-            .putString("address", a)
-            .putString("user", u)
-            .putString("recent", list.joinToString("\n"))
-            .apply()
-        client.connect(a, u)
-        client.setSneak(sneakOn)
-        client.setSprint(sprintOn)
-        pollJob?.cancel()
-        pollJob = viewModelScope.launch {
-            while (isActive) {
-                hud = withContext(Dispatchers.Default) { client.hud() }
-                delay(200)
-            }
-        }
-    }
-
-    fun disconnect() {
-        client.disconnect()
-        pollJob?.cancel()
-        connected = false
-        hud = null
-        status = "Terputus"
-    }
-
-    fun send(text: String) {
-        recentSent.remove(text)
-        recentSent.add(0, text)
-        while (recentSent.size > 5) recentSent.removeAt(recentSent.size - 1)
-        client.sendChat(text)
-    }
-
-    fun press(k: Key, down: Boolean) = client.press(k, down)
-    fun look(dYaw: Float, dPitch: Float) = client.look(dYaw, dPitch)
-    fun faceYaw(yaw: Float) = client.faceYaw(yaw)
-    fun toggleFly() = client.toggleFly()
-    fun selectSlot(i: Int) = client.selectSlot(i)
-    fun useItem() = client.useItem()
-    fun swing() = client.swing()
-    fun clickMenuSlot(i: Int) = client.clickMenuSlot(i)
-    fun closeMenu() = client.closeMenu()
-    fun respawn() = client.respawn()
-
-    fun toggleSneak() {
-        sneakOn = !sneakOn
-        client.setSneak(sneakOn)
-    }
-
-    fun toggleSprint() {
-        sprintOn = !sprintOn
-        client.setSprint(sprintOn)
-    }
-
-    override fun onChat(line: ChatLine) {
-        main.post {
-            lines.add(line)
-            if (lines.size > 500) lines.removeAt(0)
-        }
-    }
-
-    override fun onStatus(text: String) {
-        main.post { status = text }
-    }
-
-    override fun onDisconnected(reason: String) {
-        main.post {
-            connected = false
-            status = reason
-            hud = null
-            pollJob?.cancel()
-        }
-    }
-
-    override fun onCleared() {
-        client.disconnect()
-    }
-}
 
 // ======================================================================= Tema
 
@@ -292,13 +161,17 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-fun App(vm: ChatViewModel = viewModel()) {
+fun App(app: AppViewModel = viewModel()) {
+    // Tombol kembali dari sebuah sesi menuju Beranda (sesi tetap tersambung).
+    BackHandler(enabled = app.current != null) { app.goHome() }
     Box(Modifier.fillMaxSize().safeDrawingPadding(), contentAlignment = Alignment.TopCenter) {
         // Di tablet / layar lebar isi dibatasi lebarnya supaya tetap nyaman dibaca.
         Box(Modifier.widthIn(max = 640.dp).fillMaxWidth().fillMaxHeight()) {
-            if (vm.connected) MainScreen(vm) else ConnectScreen(vm)
+            val cur = app.current
+            if (cur == null) HomeScreen(app) else key(cur.id) { MainScreen(app, cur) }
         }
     }
+    AppDialogs(app)
 }
 
 // ======================================================================= Ikon (digambar sendiri, tanpa emoji)
@@ -527,81 +400,6 @@ fun HoldButton(
     }
 }
 
-// ======================================================================= Layar sambung
-
-@Composable
-fun ConnectScreen(vm: ChatViewModel) {
-    val cs = MaterialTheme.colorScheme
-    var address by rememberSaveable { mutableStateOf(vm.lastAddress) }
-    var user by rememberSaveable {
-        mutableStateOf(vm.lastUser.ifBlank { "Pemain" + (100..999).random() })
-    }
-    val problem = problemOf(vm.status)
-
-    Column(
-        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 28.dp),
-        verticalArrangement = Arrangement.spacedBy(20.dp)
-    ) {
-        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text("CubeChat", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold)
-            Text(
-                "Main Minecraft dari HP: ngobrol, berjalan, dan memakai perintah server.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = cs.onSurfaceVariant
-            )
-        }
-
-        Panel {
-            AppField(
-                label = "Alamat server",
-                value = address,
-                onChange = { address = it },
-                placeholder = "contoh: play.namaserver.com",
-                helper = "Port boleh ditulis, misalnya play.namaserver.com:25565",
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri)
-            )
-            AppField(
-                label = "Nama pemain",
-                value = user,
-                onChange = { user = it },
-                placeholder = "nama kamu di game"
-            )
-            if (vm.recent.isNotEmpty()) {
-                SectionTitle("Terakhir dipakai")
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    items(vm.recent.toList()) { r -> SmallButton(r) { address = r } }
-                }
-            }
-        }
-
-        Button(
-            onClick = { vm.connect(address, user) },
-            enabled = address.isNotBlank() && user.isNotBlank(),
-            shape = RoundedCornerShape(14.dp),
-            modifier = Modifier.fillMaxWidth().height(52.dp)
-        ) { Text("Masuk ke server", fontSize = 16.sp, fontWeight = FontWeight.SemiBold) }
-
-        if (problem != null) {
-            Column(
-                Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
-                    .background(cs.error.copy(alpha = 0.12f)).padding(14.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp)
-            ) {
-                Text(problem.first, color = cs.error, fontWeight = FontWeight.Medium, fontSize = 14.sp)
-                if (problem.second.isNotBlank()) {
-                    Text(problem.second, color = cs.onSurfaceVariant, fontSize = 12.sp)
-                }
-            }
-        }
-
-        Text(
-            "Versi game 1.21.11. Hanya untuk server yang tidak mewajibkan akun Microsoft (mode offline).",
-            style = MaterialTheme.typography.bodySmall,
-            color = cs.onSurfaceVariant
-        )
-    }
-}
-
 /** Ubah pesan teknis menjadi kalimat yang gampang dipahami. Null kalau tidak ada masalah. */
 private fun problemOf(raw: String): Pair<String, String>? {
     if (raw == "Belum terhubung" || raw == "Terputus" || raw.startsWith("Menghubungkan") || raw.startsWith("Masuk server")) {
@@ -626,13 +424,15 @@ private fun problemOf(raw: String): Pair<String, String>? {
 // ======================================================================= Layar utama
 
 @Composable
-fun MainScreen(vm: ChatViewModel) {
+fun MainScreen(app: AppViewModel, vm: GameSession) {
     var tab by rememberSaveable { mutableStateOf(0) }
     var askExit by remember { mutableStateOf(false) }
     val hud = vm.hud
 
     Column(Modifier.fillMaxSize()) {
+        SessionBar(app, vm)
         TopBar(vm, hud) { askExit = true }
+        if (!vm.alive) EndedBanner(app, vm)
         Box(Modifier.weight(1f).fillMaxWidth()) {
             when (tab) {
                 0 -> ChatTab(vm)
@@ -655,11 +455,11 @@ fun MainScreen(vm: ChatViewModel) {
         AlertDialog(
             onDismissRequest = { askExit = false },
             title = { Text("Keluar dari server?") },
-            text = { Text("Koneksi akan diputus. Kamu bisa masuk lagi kapan saja.") },
+            text = { Text("Koneksi akun ini akan diputus. Sesi lain tetap berjalan. Untuk meninggalkan sesi tanpa memutus, pakai tombol Beranda.") },
             confirmButton = {
                 TextButton(onClick = {
                     askExit = false
-                    vm.disconnect()
+                    app.closeSession(vm)
                 }) { Text("Keluar") }
             },
             dismissButton = { TextButton(onClick = { askExit = false }) { Text("Batal") } }
@@ -667,8 +467,28 @@ fun MainScreen(vm: ChatViewModel) {
     }
 }
 
+/** Muncul di atas isi sesi kalau koneksi terputus: tawarkan sambung ulang. */
 @Composable
-fun TopBar(vm: ChatViewModel, hud: Hud?, onExit: () -> Unit) {
+fun EndedBanner(app: AppViewModel, vm: GameSession) {
+    val cs = MaterialTheme.colorScheme
+    val problem = problemOf(vm.status)
+    Column(
+        Modifier.fillMaxWidth().background(cs.error.copy(alpha = 0.12f)).padding(horizontal = 16.dp, vertical = 10.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Text(problem?.first ?: "Koneksi terputus.", color = cs.error, fontWeight = FontWeight.Medium, fontSize = 14.sp)
+        if (problem != null && problem.second.isNotBlank()) {
+            Text(problem.second, fontSize = 12.sp, color = cs.onSurfaceVariant)
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            SmallButton("Sambung ulang", Modifier.weight(1f), strong = true) { app.reconnect(vm) }
+            SmallButton("Tutup sesi", Modifier.weight(1f)) { app.closeSession(vm) }
+        }
+    }
+}
+
+@Composable
+fun TopBar(vm: GameSession, hud: Hud?, onExit: () -> Unit) {
     val cs = MaterialTheme.colorScheme
     val ready = hud != null && hud.spawned
     Column(
@@ -678,19 +498,21 @@ fun TopBar(vm: ChatViewModel, hud: Hud?, onExit: () -> Unit) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(
-                    vm.lastAddress,
+                    vm.server.name,
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(Modifier.size(8.dp).clip(CircleShape).background(if (ready) cs.primary else cs.tertiary))
+                    val dot = if (!vm.alive) cs.error else if (ready) cs.primary else cs.tertiary
+                    Box(Modifier.size(8.dp).clip(CircleShape).background(dot))
                     Spacer(Modifier.width(6.dp))
                     val text = when {
-                        hud == null -> "Menghubungkan..."
-                        !hud.spawned -> "Memuat dunia..."
-                        else -> "Terhubung  \u2022  " + modeLabel(hud.gameMode)
+                        !vm.alive -> vm.username + "  \u2022  Terputus"
+                        hud == null -> vm.username + "  \u2022  Menghubungkan..."
+                        !hud.spawned -> vm.username + "  \u2022  Memuat dunia..."
+                        else -> vm.username + "  \u2022  " + modeLabel(hud.gameMode)
                     }
                     Text(text, style = MaterialTheme.typography.labelMedium, color = cs.onSurfaceVariant)
                 }
@@ -760,7 +582,7 @@ fun NavItem(glyph: Glyph, label: String, selected: Boolean, modifier: Modifier, 
 }
 
 @Composable
-fun Overlay(vm: ChatViewModel, hud: Hud?) {
+fun Overlay(vm: GameSession, hud: Hud?) {
     if (hud == null) return
     val scrim = Color.Black.copy(alpha = 0.7f)
     Box(Modifier.fillMaxSize()) {
@@ -808,7 +630,7 @@ fun Overlay(vm: ChatViewModel, hud: Hud?) {
 // ======================================================================= Tab Obrolan
 
 @Composable
-fun ChatTab(vm: ChatViewModel) {
+fun ChatTab(vm: GameSession) {
     val cs = MaterialTheme.colorScheme
     val dark = isDark()
     val listState = rememberLazyListState()
@@ -941,7 +763,7 @@ private fun usageHint(input: String, cmds: List<CommandInfo>): String? {
 // ======================================================================= Tab Kontrol
 
 @Composable
-fun ControlTab(vm: ChatViewModel) {
+fun ControlTab(vm: GameSession) {
     val hud = vm.hud
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val landscape = maxWidth > maxHeight
@@ -978,7 +800,7 @@ fun ControlTab(vm: ChatViewModel) {
 }
 
 @Composable
-fun LookPad(vm: ChatViewModel, hud: Hud?, modifier: Modifier) {
+fun LookPad(vm: GameSession, hud: Hud?, modifier: Modifier) {
     val cs = MaterialTheme.colorScheme
     val shape = RoundedCornerShape(20.dp)
     val here = if (hud != null) compass(hud.yaw) else ""
@@ -1045,7 +867,7 @@ fun DirPill(label: String, active: Boolean, modifier: Modifier, onClick: () -> U
 }
 
 @Composable
-fun DPad(vm: ChatViewModel, btn: Dp) {
+fun DPad(vm: GameSession, btn: Dp) {
     Column(
         Modifier.width(btn * 3 + 16.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -1061,7 +883,7 @@ fun DPad(vm: ChatViewModel, btn: Dp) {
 }
 
 @Composable
-fun ActionPad(vm: ChatViewModel, hud: Hud?, btn: Dp, modifier: Modifier) {
+fun ActionPad(vm: GameSession, hud: Hud?, btn: Dp, modifier: Modifier) {
     Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
         if (hud?.canFly == true) {
             ToggleChip("Terbang", hud.flying, Modifier.fillMaxWidth()) { vm.toggleFly() }
@@ -1083,7 +905,7 @@ fun ActionPad(vm: ChatViewModel, hud: Hud?, btn: Dp, modifier: Modifier) {
 }
 
 @Composable
-fun Hotbar(vm: ChatViewModel, hud: Hud?) {
+fun Hotbar(vm: GameSession, hud: Hud?) {
     val cs = MaterialTheme.colorScheme
     val sel = hud?.selectedSlot ?: 0
     val held = hud?.inventory?.getOrNull(36 + sel)
@@ -1110,7 +932,7 @@ fun Hotbar(vm: ChatViewModel, hud: Hud?) {
 // ======================================================================= Tab Tas
 
 @Composable
-fun BagTab(vm: ChatViewModel) {
+fun BagTab(vm: GameSession) {
     val cs = MaterialTheme.colorScheme
     val hud = vm.hud
     val inv = hud?.inventory ?: emptyList()
@@ -1224,7 +1046,7 @@ fun SlotCell(item: ItemView?, selected: Boolean, modifier: Modifier = Modifier, 
 // ======================================================================= Menu dari server
 
 @Composable
-fun MenuDialog(vm: ChatViewModel, menu: MenuView) {
+fun MenuDialog(vm: GameSession, menu: MenuView) {
     val cs = MaterialTheme.colorScheme
     var showBag by remember { mutableStateOf(false) }
     val own = (menu.slots.size - 36).coerceAtLeast(0)
@@ -1316,7 +1138,7 @@ fun MenuRow(item: ItemView, onClick: () -> Unit) {
 // ======================================================================= Tab Info
 
 @Composable
-fun InfoTab(vm: ChatViewModel, onUseCommand: (String) -> Unit) {
+fun InfoTab(vm: GameSession, onUseCommand: (String) -> Unit) {
     val cs = MaterialTheme.colorScheme
     val dark = isDark()
     val hud = vm.hud
